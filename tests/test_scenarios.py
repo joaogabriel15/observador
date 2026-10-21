@@ -94,7 +94,8 @@ def scan(root, state=None, rules=None, max_chars=8000):
             rust = subprocess.run(cmd, capture_output=True, encoding="utf-8", check=True).stdout
             assert rust == out, f"Rust diferente do Python\n--- python\n{out}\n--- rust\n{rust}"
             if state and Path(state).exists():
-                assert rust_state.read_bytes() == Path(state).read_bytes(), "estado gravado difere entre Rust e Python"
+                # o Python no Windows grava \r\n no lugar de \n; o conteúdo é o mesmo
+                assert rust_state.read_bytes() == Path(state).read_bytes().replace(b"\r\n", b"\n"), "estado gravado difere entre Rust e Python"
     return out
 
 
