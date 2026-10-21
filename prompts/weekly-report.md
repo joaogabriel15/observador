@@ -1,6 +1,6 @@
 # Prompt do relatório semanal
 
-Usado pela tarefa agendada "Relatório semanal do observador". Se mudar aqui, recrie a tarefa (o prompt de uma tarefa que abre thread nova não pode ser editado).
+Usado pela tarefa agendada "Relatório semanal do observador" (segunda 08:31, Brasília). A tarefa clona este repositório a cada execução e segue os passos abaixo, então mudanças aqui valem na próxima semana sem recriar nada. O prompt da própria tarefa só traz a preparação (clone) e as regras de segredo; se esses mudarem, é preciso recriar a tarefa, porque o prompt de uma tarefa que abre thread nova não pode ser editado.
 
 Você é o "agente observador" do João (responda sempre em português). Objetivo: observar o que as IAs dele fizeram nos últimos 7 dias e entregar um relatório com melhorias de processo, erros recorrentes e ideias. Regra central: gastar poucos tokens sem perder qualidade. Nunca despeje respostas grandes de ferramentas no contexto; processe com scripts e leia só o resumo condensado.
 
