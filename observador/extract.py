@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 SNIPPET = 200
 
 ERROR_RE = re.compile(
-    r"(?i)(traceback \(most recent|\b\w*error:|(?<!except )\b\w*exception:|command not found|"
-    r"permission denied|exit code [1-9]|\bfatal:|\bfailed\b)"
+    r"(?i)(traceback \(most recent|(?<![A-Za-z_])(?<!except )(?:[A-Za-z]*Error|[A-Za-z]*Exception|error|fatal):|"
+    r"command not found|permission denied|exit code [1-9]|\bfailed\b|\bkilled\b|timed out)"
 )
 CORRECTION_RE = re.compile(
     r"(?i)\b(errado|de novo|já falei|ja falei|não era isso|nao era isso|"
@@ -31,6 +31,42 @@ USER_ROLES = {"user", "human", "user_message"}
 ASSISTANT_ROLES = {"assistant", "agent", "agent_message"}
 
 
+EXIT_KEYS = {"exit_code", "exitcode", "returncode", "return_code"}
+
+
+def deep_parse(obj, depth=0):
+    """Abre strings que contêm JSON (ex.: argumentos de chamadas de ferramenta)."""
+    if depth > 6:
+        return obj
+    if isinstance(obj, str):
+        t = obj.lstrip()
+        if t[:1] in "{[" and 2 < len(t) < 50_000:
+            try:
+                return deep_parse(json.loads(t), depth + 1)
+            except ValueError:
+                return obj
+        return obj
+    if isinstance(obj, dict):
+        return {k: deep_parse(v, depth + 1) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [deep_parse(v, depth + 1) for v in obj]
+    return obj
+
+
+def find_exit_codes(obj, depth=0):
+    if depth > 8:
+        return
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if str(k).lower() in EXIT_KEYS and isinstance(v, int) and not isinstance(v, bool) and v != 0:
+                yield v
+            else:
+                yield from find_exit_codes(v, depth + 1)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from find_exit_codes(v, depth + 1)
+
+
 def has_secret(text):
     return any(r.search(text) for r in SECRET_RES)
 
@@ -39,6 +75,29 @@ def redact(text):
     for r in SECRET_RES:
         text = r.sub("[SEGREDO]", text)
     return IP_RE.sub("[IP]", text)
+
+
+def signature(text):
+    """Assinatura estável de um erro: troca números, ids e caminhos para agrupar repetições."""
+    t = " ".join(text.split()).lower()[:100]
+    t = re.sub(r"[0-9a-f]{8}-[0-9a-f-]{27}|0x[0-9a-f]+|\d+", "N", t)
+    t = re.sub(r"([a-z]:)?[\\/][\w.\-~\\/ ]{3,}", "<path>", t)
+    return t.strip()
+
+
+WRAPPER_RE = re.compile(r"^(?:(?:bash|sh|zsh)\s+-l?c\s+|cmd(?:\.exe)?\s+/c\s+|powershell(?:\.exe)?\s+(?:-\w+\s+)*-command\s+)", re.I)
+CD_RE = re.compile(r"^cd\s+(?:\"[^\"]+\"|'[^']+'|\S+)\s*&&\s*")
+
+
+def norm_cmd(cmd):
+    """Tira invólucros de shell e `cd ... &&` para agrupar o mesmo comando em sessões diferentes."""
+    cmd = " ".join(cmd.split())
+    for _ in range(3):
+        new = CD_RE.sub("", WRAPPER_RE.sub("", cmd)).strip("\"' ")
+        if new == cmd:
+            break
+        cmd = new
+    return cmd
 
 
 def snippet(text):
@@ -112,6 +171,7 @@ class Stats:
     secrets: int = 0
     corrections: list = field(default_factory=list)
     ends_with_question: bool = False
+    error_sigs: set = field(default_factory=set)
 
     def merge(self, other):
         self.records += other.records
@@ -123,17 +183,23 @@ class Stats:
         self.secrets += other.secrets
         self.corrections += other.corrections
         self.ends_with_question = self.ends_with_question or other.ends_with_question
+        self.error_sigs |= other.error_sigs
 
 
 def scan_records(records, max_samples=5):
     st = Stats()
     last_assistant = ""
+    seen_sigs = set()
     for rec in records:
         st.records += 1
+        rec = deep_parse(rec)
         role = find_role(rec)
+        for code in find_exit_codes(rec):
+            st.errors += 1
+            st.error_sigs.add(f"exit code {code}")
         st.models.update(find_models(rec))
         for cmd in find_commands(rec):
-            st.commands[snippet(cmd)[:120]] += 1
+            st.commands[snippet(norm_cmd(cmd))[:120]] += 1
             if "--no-verify" in cmd:
                 st.no_verify += 1
         for _, s in iter_strings(rec):
@@ -141,8 +207,11 @@ def scan_records(records, max_samples=5):
                 st.secrets += 1
             if ERROR_RE.search(s):
                 st.errors += 1
-                if len(st.error_samples) < max_samples:
-                    m = ERROR_RE.search(s)
+                m = ERROR_RE.search(s)
+                sig = signature(s[m.start():m.start() + 100])
+                st.error_sigs.add(sig)
+                if len(st.error_samples) < max_samples and sig not in seen_sigs:
+                    seen_sigs.add(sig)
                     st.error_samples.append(snippet(s[max(0, m.start() - 60):]))
             if role in USER_ROLES and CORRECTION_RE.search(s) and len(s) < 400:
                 if len(st.corrections) < max_samples:
@@ -198,3 +267,29 @@ def render(name, st, repeat_min=3):
     for s in st.corrections[:3]:
         lines.append(f"  - correção do usuário: {s}")
     return "\n".join(lines)
+
+
+def render_cross(per_file, min_files=2):
+    """Padrões que se repetem em vários arquivos (sessões): é o que vira sugestão de processo."""
+    n = len(per_file)
+    lines = [f"## Entre os {n} arquivos"]
+    for label, pred in (
+        ("terminaram com pergunta do assistente", lambda st: st.ends_with_question),
+        ("usaram --no-verify", lambda st: st.no_verify > 0),
+        ("tiveram correção ou irritação do usuário", lambda st: bool(st.corrections)),
+        ("tiveram segredos em texto", lambda st: st.secrets > 0),
+    ):
+        k = sum(1 for _, st in per_file if pred(st))
+        if k:
+            lines.append(f"- {k} de {n} {label}")
+    sigs, cmds = Counter(), Counter()
+    for _, st in per_file:
+        sigs.update(st.error_sigs)
+        cmds.update(c for c, k in st.commands.items() if k >= 3)
+    for sig, k in sigs.most_common(5):
+        if k >= min_files:
+            lines.append(f"- erro recorrente em {k} arquivos: {sig[:100]}")
+    for cmd, k in cmds.most_common(5):
+        if k >= min_files:
+            lines.append(f"- comando repetido 3 vezes ou mais na mesma sessão, em {k} arquivos: `{cmd[:100]}`")
+    return "\n".join(lines) if len(lines) > 1 else ""

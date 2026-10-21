@@ -30,16 +30,20 @@ def cmd_sessions(args):
 
 def cmd_scan(args):
     cutoff = time.time() - args.days * 86400
-    total, parts = extract.Stats(), []
+    total, parts, per_file = extract.Stats(), [], []
     for f in expand(args.paths):
         if f.stat().st_mtime < cutoff:
             continue
         st = extract.scan_records(extract.read_records(f))
         if st.records:
             total.merge(st)
+            per_file.append((f.name, st))
             if st.errors or st.no_verify or st.secrets or st.corrections or st.ends_with_question:
                 parts.append(extract.render(f.name, st))
-    out = [extract.render("TOTAL", total)] + (parts if len(parts) > 1 else [])
+    out = [extract.render("TOTAL", total)]
+    if len(per_file) > 1:
+        out += [extract.render_cross(per_file)] + parts
+    out = [o for o in out if o]
     text = "\n\n".join(out)
     print(text[: args.max_chars] + ("\n[cortado]" if len(text) > args.max_chars else ""))
 

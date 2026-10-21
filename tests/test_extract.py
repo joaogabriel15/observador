@@ -38,6 +38,14 @@ class ExtractTests(unittest.TestCase):
         self.assertNotIn("abcdefghijklmnop1234567890", text)
         self.assertNotIn("192.168.1.10", text)
 
+    def test_nome_de_parametro_nao_e_erro(self):
+        st = extract.scan_records([{"role": "assistant", "content": "def f(raise_on_error: bool = False):\n    try: pass\n    except Exception: pass"}])
+        self.assertEqual(st.errors, 0)
+
+    def test_erro_real_e_detectado(self):
+        for txt in ("ValueError: x", "error: linking failed", "fatal: not a git repository", "Killed"):
+            self.assertEqual(extract.scan_records([{"output": txt}]).errors, 1, txt)
+
     def test_read_jsonl_skips_bad_lines(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "a.jsonl"
