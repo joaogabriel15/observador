@@ -5,6 +5,7 @@
 """
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -43,6 +44,16 @@ def cmd_scan(args):
     out = [extract.render("TOTAL", total)]
     if len(per_file) > 1:
         out += [extract.render_cross(per_file)] + parts
+    state_path = getattr(args, "state", None)
+    if state_path and per_file:
+        new = extract.summary(per_file)
+        state = Path(state_path)
+        if state.exists():
+            try:
+                out.insert(min(2, len(out)), extract.compare(json.loads(state.read_text(encoding="utf-8")), new))
+            except ValueError:
+                pass
+        state.write_text(json.dumps(new, ensure_ascii=False, indent=1), encoding="utf-8")
     out = [o for o in out if o]
     text = "\n\n".join(out)
     print(text[: args.max_chars] + ("\n[cortado]" if len(text) > args.max_chars else ""))
@@ -80,6 +91,7 @@ def main(argv=None):
     c.add_argument("paths", nargs="+")
     c.add_argument("--days", type=int, default=7)
     c.add_argument("--max-chars", type=int, default=6000)
+    c.add_argument("--state", help="arquivo JSON com o resumo da semana anterior; é lido e depois atualizado")
     c.set_defaults(fn=cmd_scan)
     d = sub.add_parser("discover")
     d.add_argument("paths", nargs="*")
