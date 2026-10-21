@@ -6,6 +6,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Versão a publicar (ex.: v0.2.0). Vazio: só compila e guarda os artefatos."
+        required: false
+        default: ""
 
 jobs:
   build:
@@ -49,7 +54,7 @@ jobs:
           path: dist/${{ matrix.asset }}
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -62,8 +67,9 @@ jobs:
       - name: Somas de verificação e publicação
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           cd dist
           sha256sum * > SHA256SUMS
-          gh release create "${GITHUB_REF_NAME}" * --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" \
+          gh release create "${TAG}" * --repo "${GITHUB_REPOSITORY}" --target "${GITHUB_SHA}" --title "${TAG}" \
             --notes "Binários únicos para Linux (x86_64, estático) e Windows (x86_64). Sem Python e sem dependências."
