@@ -16,14 +16,15 @@ telemetria OpenTelemetry (opcional)    ─┘
 
 ## Uso
 
-Python 3.9 ou mais novo, só biblioteca padrão.
+Python 3.9 ou mais novo, só biblioteca padrão. Testes: `python -m unittest discover -s tests` (37 casos, incluindo semana com gabarito, entradas hostis e variantes de segredo).
 
 ```bash
 # 1. Ver o que existe na sua máquina (só nomes, tamanhos e nomes de chaves, nunca conteúdo)
 python -m observador discover
 
 # 2. Resumir os últimos 7 dias de logs locais (Codex, Kimi, Claude Code)
-python -m observador scan ~/.codex ~/.kimi ~/.kimi-code ~/.claude/projects --days 7
+python -m observador scan ~/.codex ~/.kimi ~/.kimi-code ~/.claude/projects --days 7 \
+  --rules CLAUDE.md --state digests/semana.json
 
 # 3. Estatísticas das sessões da nuvem, a partir da resposta salva de list_sessions
 python -m observador sessions resposta_list_sessions.txt --days 7
@@ -35,13 +36,23 @@ No Windows use `%USERPROFILE%` no lugar de `~` se o shell não expandir. A saíd
 
 | Sinal | Como detecta |
 | --- | --- |
-| Erros | `Traceback`, `Algo Error:`, `command not found`, `permission denied`, `exit code` diferente de 0, `failed` |
-| Comandos repetidos | mesmo valor de `command`/`cmd` 3 vezes ou mais |
+| Erros, por tipo (ambiente, http, teste, código) | `Traceback`, `Error:`, `command not found`, `permission denied`, `HTTP 4xx/5xx`, `killed`, `timed out`, códigos de saída diferentes de 0 |
+| Erro que se repete entre sessões | assinatura do erro (sem números, ids e caminhos); em tracebacks vale a última linha de exceção |
+| Comandos repetidos | mesmo comando 3 vezes ou mais na sessão, com `cd ... &&` e `bash -lc` removidos |
+| Arquivo editado 4 vezes ou mais | chamadas de edição e patches em texto |
 | `--no-verify` | texto do comando |
-| Correções do usuário | mensagens do usuário com "errado", "de novo", "já falei", "wrong", "revert", "stop"... |
+| Correções do usuário | "errado", "de novo", "não funcionou", "still failing", palavrões; só fala do usuário, nunca saída de ferramenta |
+| Conclusão contestada | a IA diz "pronto/feito/done" e a próxima fala do usuário é uma correção |
+| Usuário repetindo a instrução | a mesma mensagem do usuário duas vezes na sessão |
+| Compactação de contexto | marcadores de resumo/compactação |
 | Espera por resposta | última mensagem do assistente termina com `?` |
-| Segredos em texto | Bearer, JWT, `sk-`/`ghp_`, `password=`; só conta, nunca imprime o valor |
-| Modelos | valores da chave `model` |
+| Segredos em texto | Bearer, JWT, chaves `sk-`/`ghp_`/AWS, chave privada, URL com senha, `password=`; só conta, nunca imprime o valor |
+| Regras desrespeitadas | `--rules CLAUDE.md`: comandos que o arquivo manda não usar ("nunca use `x`") e que apareceram nas sessões |
+| Modelos e tokens | chave `model` e soma de `input_tokens`/`output_tokens` |
+| Custo e status das sessões da nuvem | `sessions`: custo estimado por status e as 3 mais caras (só sessões que informam custo) |
+| Mudança desde a semana passada | `--state arquivo.json`: novo, continua e sumiu |
+
+Cada sessão recebe uma pontuação; as maiores aparecem em "para leitura completa", que é o filtro barato antes do caro: só essas merecem ser abertas inteiras.
 
 ## Limites conhecidos
 

@@ -20,6 +20,7 @@ def summarize(path, days=7, now=None, max_open=8):
         if isinstance(s, dict) and s.get("updated_at") and parse_ts(s["updated_at"]) >= cutoff
     ]
     status, models, repos = Counter(), Counter(), Counter()
+    cost, cost_by_status, costly = 0.0, Counter(), []
     to_open = []
     for s in sessions:
         post = s.get("post_turn_summary") or {}
@@ -31,6 +32,10 @@ def summarize(path, days=7, now=None, max_open=8):
             url = (src.get("git_repository") or {}).get("url", "")
             if url:
                 repos[url.split("github.com/")[-1]] += 1
+        usd = ((s.get("external_metadata") or {}).get("usage") or {}).get("cost_usd") or 0
+        cost += usd
+        cost_by_status[cat] += usd
+        costly.append((usd, s.get("title", "")[:50], cat))
         used = ((s.get("external_metadata") or {}).get("context_usage") or {}).get("used_tokens") or 0
         if cat in ("need_input", "failed") or used > BIG_CONTEXT:
             to_open.append((0 if cat in ("need_input", "failed") else 1, s["id"], s.get("title", "")[:60], cat, used))
@@ -42,6 +47,9 @@ def summarize(path, days=7, now=None, max_open=8):
         "models": dict(models),
         "repos": dict(repos.most_common(5)),
         "to_open": [t[1:] for t in to_open[:max_open]],
+        "cost": round(cost, 2),
+        "cost_by_status": {k: round(v, 2) for k, v in cost_by_status.items() if v},
+        "costly": [(round(u, 2), t, c) for u, t, c in sorted(costly, reverse=True)[:3] if u],
     }
 
 
@@ -51,7 +59,11 @@ def render(info):
         "- status: " + ", ".join(f"{k} {v}" for k, v in info["status"].items()),
         "- modelos: " + ", ".join(f"{k} {v}" for k, v in info["models"].items()),
         "- repositórios: " + ", ".join(f"{k} {v}" for k, v in info["repos"].items()),
-        "- abrir a transcrição de:",
     ]
+    if info.get("cost"):
+        lines.append(f"- custo estimado das sessões que informam custo (equivalente em API, não é cobrança): US$ {info['cost']}; por status: "
+                     + ", ".join(f"{k} {v}" for k, v in info["cost_by_status"].items()))
+        lines += [f"  - mais cara: US$ {u} | {t} | {c}" for u, t, c in info["costly"]]
+    lines.append("- abrir a transcrição de:")
     lines += [f"  - {sid} | {title} | {cat} | contexto {used}" for sid, title, cat, used in info["to_open"]]
     return "\n".join(lines)

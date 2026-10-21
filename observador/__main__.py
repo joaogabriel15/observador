@@ -45,6 +45,14 @@ def cmd_scan(args):
     if len(per_file) > 1:
         out += [extract.render_cross(per_file)] + parts
     state_path = getattr(args, "state", None)
+    rules = getattr(args, "rules", None)
+    if rules and per_file:
+        try:
+            viol = extract.rule_violations(Path(rules).read_text(encoding="utf-8", errors="replace"), per_file)
+        except OSError:
+            viol = []
+        if viol:
+            out.insert(min(2, len(out)), "\n".join(viol))
     if state_path and per_file:
         new = extract.summary(per_file)
         state = Path(state_path)
@@ -91,6 +99,7 @@ def main(argv=None):
     c.add_argument("paths", nargs="+")
     c.add_argument("--days", type=int, default=7)
     c.add_argument("--max-chars", type=int, default=6000)
+    c.add_argument("--rules", help="CLAUDE.md ou AGENTS.md: aponta comandos que as sessões rodaram contra o que a regra proíbe")
     c.add_argument("--state", help="arquivo JSON com o resumo da semana anterior; é lido e depois atualizado")
     c.set_defaults(fn=cmd_scan)
     d = sub.add_parser("discover")

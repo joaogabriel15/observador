@@ -70,8 +70,8 @@ def write_session(root, name, records):
     path.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
 
 
-def scan(root, state=None):
-    args = type("A", (), {"paths": [str(root)], "days": 7, "max_chars": 8000, "state": state})()
+def scan(root, state=None, rules=None):
+    args = type("A", (), {"paths": [str(root)], "days": 7, "max_chars": 8000, "state": state, "rules": rules})()
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         cli.cmd_scan(args)

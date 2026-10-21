@@ -207,3 +207,92 @@ class WeeklyState(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PainPointSignals(Base):
+    """Sinais ligados às dores de quem usa agentes de IA: regras esquecidas, 'pronto' falso, compactação, custo."""
+
+    def test_conclusao_afirmada_e_contestada(self):
+        talk = [("user", "corrige o login"), ("assistant", "Pronto, corrigi o login e os testes passam."),
+                ("user", "não funcionou, continua dando erro")]
+        ok = [("user", "corrige o login"), ("assistant", "Pronto, corrigi o login."), ("user", "ótimo, agora o logout")]
+        for i in range(3):
+            write_session(self.root, f"c{i}", claude(talk))
+        write_session(self.root, "ok", claude(ok))
+        out = scan(self.root)
+        self.assertIn("3 de 4 tiveram uma conclusão afirmada pela IA e contestada", out)
+
+    def test_usuario_repetindo_a_mesma_instrucao(self):
+        msgs = [("user", "use sempre português nas respostas"), ("assistant", "certo, vou usar"),
+                ("user", "use sempre português nas respostas")]
+        write_session(self.root, "r1", claude(msgs))
+        write_session(self.root, "r2", claude(msgs))
+        write_session(self.root, "r3", claude(CLEAN))
+        self.assertIn("2 de 3 tiveram o usuário repetindo a mesma instrução", scan(self.root))
+
+    def test_resultado_de_ferramenta_nao_conta_como_fala_do_usuario(self):
+        # saída de comando contém "revert" e se repete; não é o usuário falando
+        msgs = [("user", "faz o commit do arquivo"), ("bash", ("git log", "revert abc123 revert def456 desfaz tudo")),
+                ("bash", ("git log", "revert abc123 revert def456 desfaz tudo"))]
+        write_session(self.root, "t", claude(msgs))
+        write_session(self.root, "t2", claude(msgs))
+        out = scan(self.root)
+        self.assertNotIn("tiveram correção", out)
+        self.assertNotIn("repetindo", out)
+
+    def test_compactacao_de_contexto(self):
+        compact = claude(CLEAN) + [{"type": "user", "isCompactSummary": True, "message": {"role": "user", "content": "Resumo da conversa"}}]
+        cont = claude(CLEAN) + [{"type": "user", "message": {"role": "user",
+              "content": "This session is being continued from a previous conversation that ran out of context."}}]
+        write_session(self.root, "k1", compact)
+        write_session(self.root, "k2", cont)
+        write_session(self.root, "k3", claude(CLEAN))
+        self.assertIn("2 de 3 passaram por compactação de contexto", scan(self.root))
+
+    def test_tipos_de_erro(self):
+        msgs = [("user", "x"), ("bash", ("a", "bash: foo: command not found")), ("bash", ("b", "HTTP 500 Internal Server Error")),
+                ("bash", ("c", "AssertionError: expected 3 got 4")), ("bash", ("d", "ValueError: invalid literal"))]
+        write_session(self.root, "e1", claude(msgs))
+        write_session(self.root, "e2", claude(msgs))
+        out = scan(self.root)
+        for kind in ("ambiente", "http", "teste", "codigo"):
+            self.assertIn(kind, out.split("erros por tipo:")[-1].splitlines()[0])
+
+    def test_tokens_somados(self):
+        rec = {"type": "assistant", "message": {"role": "assistant", "content": "ok pronto aqui",
+                                                  "usage": {"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 9999}}}
+        write_session(self.root, "tk", [rec, rec])
+        self.assertIn("tokens de entrada+saída (soma dos registros): 300", scan(self.root))
+
+    def test_regras_do_claude_md_desrespeitadas(self):
+        rules = self.root / "CLAUDE.md"
+        rules.write_text("# Regras\n- Nunca use `git push --force` na main\n- Evite `rm -rf` fora de /tmp\n- Prefira testes pequenos\n")
+        bad = [("user", "x"), ("bash", ("git push --force origin main", "ok"))]
+        write_session(self.root, "b1", claude(bad))
+        write_session(self.root, "b2", codex(bad))
+        write_session(self.root, "b3", claude(CLEAN))
+        out = scan(self.root, rules=str(rules))
+        self.assertIn("Regras do projeto desrespeitadas", out)
+        self.assertIn("`git push --force` em 2 sessões", out)
+        self.assertNotIn("rm -rf", out.split("Regras do projeto desrespeitadas")[1].split("##")[0])
+
+
+class SessionsCost(unittest.TestCase):
+    def test_custo_por_status(self):
+        from datetime import datetime, timezone
+        from observador import sessions
+        data = {"ccr": {"data": [
+            {"id": "a", "title": "cara", "updated_at": "2026-10-20T10:00:00Z", "post_turn_summary": {"status_category": "need_input"},
+             "external_metadata": {"usage": {"cost_usd": 12.5}}, "session_context": {"model": "m"}},
+            {"id": "b", "title": "barata", "updated_at": "2026-10-20T10:00:00Z", "post_turn_summary": {"status_category": "completed"},
+             "external_metadata": {"usage": {"cost_usd": 0.5}}, "session_context": {"model": "m"}},
+            {"id": "c", "title": "sem custo", "updated_at": "2026-10-20T10:00:00Z", "session_context": {"model": "m"}},
+        ]}}
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "x.txt"
+            p.write_text(json.dumps(data))
+            info = sessions.summarize(p, days=7, now=datetime(2026, 10, 21, tzinfo=timezone.utc))
+        self.assertEqual(info["cost"], 13.0)
+        self.assertEqual(info["cost_by_status"]["need_input"], 12.5)
+        self.assertEqual(info["costly"][0][1], "cara")
+        self.assertIn("US$ 13.0", sessions.render(info))
