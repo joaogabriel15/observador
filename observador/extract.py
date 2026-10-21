@@ -301,7 +301,7 @@ class Stats:
     secrets: int = 0
     corrections: list = field(default_factory=list)
     ends_with_question: bool = False
-    error_sigs: set = field(default_factory=set)
+    error_sigs: dict = field(default_factory=dict)  # dict e não set: a ordem de inserção torna a saída estável
     edits: Counter = field(default_factory=Counter)
     tokens: int = 0
     compactions: int = 0
@@ -319,7 +319,7 @@ class Stats:
         self.secrets += other.secrets
         self.corrections += other.corrections
         self.ends_with_question = self.ends_with_question or other.ends_with_question
-        self.error_sigs |= other.error_sigs
+        self.error_sigs.update(other.error_sigs)
         self.edits.update(other.edits)
         self.tokens += other.tokens
         self.compactions += other.compactions
@@ -340,10 +340,10 @@ def scan_records(records, max_samples=5):
         role = find_role(rec)
         for code in find_exit_codes(rec):
             st.errors += 1
-            st.error_sigs.add(f"exit code {code}")
+            st.error_sigs[f"exit code {code}"] = True
             st.err_kinds["codigo"] += 1
         st.models.update(find_models(rec))
-        st.edits.update(short_path(p) for p in set(find_edits(rec)))
+        st.edits.update(short_path(p) for p in dict.fromkeys(find_edits(rec)))
         st.tokens += count_tokens(rec)
         if is_compaction(rec):
             st.compactions += 1
@@ -368,7 +368,7 @@ def scan_records(records, max_samples=5):
                 st.errors += 1
                 m = ERROR_RE.search(s)
                 sig = signature(s[m.start():m.start() + 4000])
-                st.error_sigs.add(sig)
+                st.error_sigs[sig] = True
                 st.err_kinds[error_kind(s[m.start():m.start() + 300])] += 1
                 if len(st.error_samples) < max_samples and sig not in seen_sigs:
                     seen_sigs.add(sig)

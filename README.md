@@ -1,10 +1,12 @@
 # Observador
 
-Agente que observa o que as IAs de código fizeram durante a semana (Claude Code, Codex, Kimi CLI) e entrega um relatório com erros recorrentes, retrabalho e melhorias de processo. Feito para gastar pouco: um script sem IA condensa os logs e o modelo lê só o resumo.
+Agente que observa o que as IAs de código fizeram durante a semana (Claude Code, Codex, Kimi CLI) e entrega um relatório com erros recorrentes, retrabalho e melhorias de processo. Feito para gastar pouco: um programa sem IA condensa os logs e o modelo lê só o resumo.
+
+O programa é um **binário único em Rust, sem dependências**: não precisa de Python, de versão específica de nada nem de instalação. Baixe o arquivo para o seu sistema, rode e pronto.
 
 ## Como funciona
 
-1. **Coleta sem IA.** `python -m observador` lê logs e devolve contagens e trechos curtos, com segredos e IPs mascarados.
+1. **Coleta sem IA.** `observador` lê logs e devolve contagens e trechos curtos, com segredos e IPs mascarados.
 2. **Análise.** O modelo lê o resumo (meta de uns 15 mil tokens), compara com o relatório anterior e escreve o relatório.
 3. **Entrega.** A tarefa agendada roda toda segunda 08:31 (Brasília) e manda o resumo por email e push. Para pedir fora de hora, é só pedir na thread do projeto.
 
@@ -14,23 +16,46 @@ sessões na nuvem (list_sessions)        ├─> observador (script) ─> resumo
 telemetria OpenTelemetry (opcional)    ─┘
 ```
 
-## Uso
+## Instalação
 
-Python 3.9 ou mais novo, só biblioteca padrão. Testes: `python -m unittest discover -s tests` (37 casos, incluindo semana com gabarito, entradas hostis e variantes de segredo).
+Baixe o binário da [última versão](https://github.com/joaogabriel15/observador/releases/latest) (as somas de verificação estão em `SHA256SUMS`):
+
+| Sistema | Arquivo |
+| --- | --- |
+| Linux x86_64 (estático, roda em qualquer distribuição) | `observador-linux-x86_64` (depois `chmod +x`) |
+| Windows x86_64 | `observador-windows-x86_64.exe` |
+
+Ou compile você mesmo, só com o Rust instalado (não baixa nenhuma biblioteca, então funciona até sem internet):
+
+```bash
+cargo build --release      # gera target/release/observador (observador.exe no Windows)
+cargo test                 # testes do Rust
+```
+
+## Uso
 
 ```bash
 # 1. Ver o que existe na sua máquina (só nomes, tamanhos e nomes de chaves, nunca conteúdo)
-python -m observador discover
+observador discover
 
 # 2. Resumir os últimos 7 dias de logs locais (Codex, Kimi, Claude Code)
-python -m observador scan ~/.codex ~/.kimi ~/.kimi-code ~/.claude/projects --days 7 \
+observador scan ~/.codex ~/.kimi ~/.kimi-code ~/.claude/projects --days 7 \
   --rules CLAUDE.md --state digests/semana.json
 
 # 3. Estatísticas das sessões da nuvem, a partir da resposta salva de list_sessions
-python -m observador sessions resposta_list_sessions.txt --days 7
+observador sessions resposta_list_sessions.txt --days 7
 ```
 
-No Windows use `%USERPROFILE%` no lugar de `~` se o shell não expandir. A saída é limitada a 6000 caracteres por padrão (`--max-chars`).
+No Windows (PowerShell), o `~` também funciona nos argumentos do programa: ele troca por `%USERPROFILE%`. A saída é limitada a 6000 caracteres por padrão (`--max-chars`). No Windows o comando fica `.\observador-windows-x86_64.exe discover`.
+
+### Versão em Python (referência)
+
+A pasta `observador/` tem a primeira versão, em Python 3.9+ só com biblioteca padrão (`python -m observador ...`, mesmos comandos). Ela é a referência de comportamento: os testes em `tests/` rodam nela, e com `OBSERVADOR_BIN=target/release/observador` os mesmos cenários e mais registros gerados ao acaso são executados também no binário em Rust e comparados byte a byte. Toda mudança de heurística vale nos dois.
+
+```bash
+python -m unittest discover -s tests                                                  # só Python
+OBSERVADOR_BIN=target/release/observador python -m unittest discover -s tests         # Python x Rust
+```
 
 ## O que ele procura
 
@@ -57,19 +82,25 @@ Cada sessão recebe uma pontuação; as maiores aparecem em "para leitura comple
 ## Limites conhecidos
 
 - **Formato dos logs não verificado.** Foi testado com dados sintéticos e com transcrições do Claude Code salvas pela API, não com arquivos reais do Codex ou do Kimi CLI. O percurso é genérico (qualquer JSON/JSONL), mas rode `discover` primeiro e ajuste `extract.py` se o formato real fugir do esperado. Locais prováveis, a confirmar: `~/.codex`, `~/.kimi` ou `~/.kimi-code` (depende da versão).
+- **Windows não foi executado aqui.** O código é o mesmo e os testes rodam no Linux e no Windows pelo GitHub Actions a cada envio; o que só um Windows real confirma é o caminho da pasta pessoal e o console.
 - **Heurísticas ruidosas.** Trechos de código do assistente podem ser contados como erro. O resumo serve para triagem; a análise final é do modelo.
 - **Mascaramento por regex** pega os formatos comuns de segredo, não todos. Não publique os resumos sem olhar.
 
 ## Estrutura
 
 ```
-observador/extract.py    heurísticas, mascaramento e resumo
-observador/sessions.py   estatísticas das sessões da nuvem
-observador/__main__.py   linha de comando
+src/main.rs              linha de comando
+src/extract.rs           heurísticas, mascaramento e resumo
+src/sessions.rs          estatísticas das sessões da nuvem
+src/json.rs, regex.rs    leitor de JSON e motor de regex próprios (a biblioteca padrão do Rust não tem)
+observador/              versão em Python, referência de comportamento
+tests/                   cenários e paridade Rust x Python
+.github/workflows/       testes (Linux e Windows) e publicação dos binários ao criar uma tag v*
 prompts/weekly-report.md prompt da tarefa agendada
 docs/pesquisa.md         ferramentas e artigos pesquisados
-tests/                   python -m unittest discover -s tests
 ```
+
+Por que o motor de regex é próprio: o crate `regex` do Rust não aceita lookbehind (`(?<!...)`), que a detecção de erros usa, e o projeto não tem dependências de propósito. O motor cobre só o que as heurísticas usam e tem testes próprios.
 
 ## Próximos passos
 

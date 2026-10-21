@@ -3,6 +3,8 @@
 import contextlib
 import io
 import json
+import os
+import subprocess
 import tempfile
 import time
 import unittest
@@ -70,12 +72,30 @@ def write_session(root, name, records):
     path.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
 
 
-def scan(root, state=None, rules=None):
-    args = type("A", (), {"paths": [str(root)], "days": 7, "max_chars": 8000, "state": state, "rules": rules})()
+def scan(root, state=None, rules=None, max_chars=8000):
+    args = type("A", (), {"paths": [str(root)], "days": 7, "max_chars": max_chars, "state": state, "rules": rules})()
+    before = Path(state).read_bytes() if state and Path(state).exists() else None
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         cli.cmd_scan(args)
-    return buf.getvalue()
+    out = buf.getvalue()
+    binary = os.environ.get("OBSERVADOR_BIN")
+    if binary:
+        # com o binário em Rust compilado, todo cenário vira também um teste de paridade com o Python
+        with tempfile.TemporaryDirectory() as d:
+            cmd = [binary, "scan", str(root), "--days", "7", "--max-chars", str(max_chars)]
+            rust_state = Path(d) / "estado.json"
+            if state:
+                if before is not None:
+                    rust_state.write_bytes(before)
+                cmd += ["--state", str(rust_state)]
+            if rules:
+                cmd += ["--rules", str(rules)]
+            rust = subprocess.run(cmd, capture_output=True, encoding="utf-8", check=True).stdout
+            assert rust == out, f"Rust diferente do Python\n--- python\n{out}\n--- rust\n{rust}"
+            if state and Path(state).exists():
+                assert rust_state.read_bytes() == Path(state).read_bytes(), "estado gravado difere entre Rust e Python"
+    return out
 
 
 CLEAN = [("user", "adicione um teste"), ("bash", ("pytest -q", "3 passed")), ("assistant", "Pronto, testes passando.")]

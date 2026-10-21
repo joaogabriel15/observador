@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Testes do Rust
+        run: cargo test --release
+      - name: Compilar
+        run: cargo build --release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Testes do Python (referência)
+        run: python -m unittest discover -s tests
+      - name: Paridade Rust x Python (Linux)
+        if: runner.os == 'Linux'
+        run: OBSERVADOR_BIN=$PWD/target/release/observador python -m unittest discover -s tests
+      - name: Paridade Rust x Python (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:OBSERVADOR_BIN = "$PWD\target\release\observador.exe"
+          python -m unittest discover -s tests

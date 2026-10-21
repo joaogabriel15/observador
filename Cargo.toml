@@ -1,0 +1,16 @@
+[package]
+name = "observador"
+version = "0.2.0"
+edition = "2021"
+description = "Condensa logs de agentes de código em resumos curtos para um relatório semanal"
+license = "MIT"
+
+# Sem dependências de propósito: compila offline e gera um binário único.
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
